@@ -42,6 +42,7 @@ import dev.octoshrimpy.quik.listener.ContactAddedListener
 import dev.octoshrimpy.quik.manager.ChangelogManager
 import dev.octoshrimpy.quik.manager.PermissionManager
 import dev.octoshrimpy.quik.manager.RatingManager
+import dev.octoshrimpy.quik.model.ConversationFilterType
 import dev.octoshrimpy.quik.model.EmojiSyncNeeded
 import dev.octoshrimpy.quik.model.SyncLog
 import dev.octoshrimpy.quik.repository.ConversationRepository
@@ -169,11 +170,11 @@ class MainViewModel @Inject constructor(
             .withLatestFrom(state) { _, state ->
                 if (state.page is Inbox)
                     newState {
-                        copy(page = Inbox(data = conversationRepo.getConversations(prefs.unreadAtTop.get())))
+                        copy(page = (state.page as Inbox).copy(data = conversationRepo.getConversations(prefs.unreadAtTop.get(), filterType = (state.page as Inbox).filter)))
                     }
                 else if (state.page is Archived)
                     newState {
-                        copy(page = Inbox(data = conversationRepo.getConversations(prefs.unreadAtTop.get(), true)))
+                        copy(page = (state.page as Archived).copy(data = conversationRepo.getConversations(prefs.unreadAtTop.get(), true)))
                     }
             }
             .autoDisposable(view.scope())
@@ -259,13 +260,33 @@ class MainViewModel @Inject constructor(
                 .autoDisposable(view.scope())
                 .subscribe { externalNavigator.showChangelog() }
 
+        view.filterSelectedIntent
+                .distinctUntilChanged()
+                .withLatestFrom(state) { filter, state ->
+                    val conversations = conversationRepo.getConversations(prefs.unreadAtTop.get(), filterType = filter)
+                    if (state.page is Inbox) {
+                        newState {
+                            copy(
+                                currentFilter = filter,
+                                page = state.page.copy(data = conversations, filter = filter, selected = 0)
+                            )
+                        }
+                    } else {
+                        newState {
+                            copy(currentFilter = filter)
+                        }
+                    }
+                }
+                .autoDisposable(view.scope())
+                .subscribe()
+
         view.queryChangedIntent
                 .debounce(200, TimeUnit.MILLISECONDS)
                 .observeOn(AndroidSchedulers.mainThread())
                 .map { query -> query.trim() }
                 .withLatestFrom(state) { query, state ->
                     if (query.isEmpty() && state.page is Searching) {
-                        newState { copy(page = Inbox(data = conversationRepo.getConversations(prefs.unreadAtTop.get()))) }
+                        newState { copy(page = Inbox(data = conversationRepo.getConversations(prefs.unreadAtTop.get(), filterType = state.currentFilter), filter = state.currentFilter)) }
                     }
                     query
                 }
@@ -335,8 +356,10 @@ class MainViewModel @Inject constructor(
                                 copy(
                                     page = Inbox(
                                         data = conversationRepo.getConversations(
-                                            prefs.unreadAtTop.get()
-                                        )
+                                            prefs.unreadAtTop.get(),
+                                            filterType = state.currentFilter
+                                        ),
+                                        filter = state.currentFilter
                                     )
                                 )
                             }
@@ -363,8 +386,10 @@ class MainViewModel @Inject constructor(
                         copy(
                             page = Inbox(
                                 data = conversationRepo.getConversations(
-                                    prefs.unreadAtTop.get()
-                                )
+                                    prefs.unreadAtTop.get(),
+                                    filterType = currentFilter
+                                ),
+                                filter = currentFilter
                             )
                         )
                     }
