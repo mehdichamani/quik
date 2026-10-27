@@ -24,33 +24,54 @@ jobs:
         java-version: '17'
         cache: gradle
 
+    - name: Setup Signing Keystore (if secret provided)
+      id: signing_setup
+      shell: bash
+      env:
+        KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+        KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+      run: |
+        if [[ -n "${KEYSTORE_B64:-}" ]]; then
+          mkdir -p presentation
+          echo "$KEYSTORE_B64" | base64 -d > presentation/my-release-key.keystore
+          chmod 600 presentation/my-release-key.keystore
+          echo "CI=true" >> "$GITHUB_ENV"
+          echo "keystore_password=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "key_alias=$KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "key_password=$KEY_PASSWORD" >> "$GITHUB_ENV"
+          echo "is_release=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "is_release=false" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Build with Gradle
-      run: ./gradlew assembleDebug
+      run: |
+        if [[ "${{ steps.signing_setup.outputs.is_release }}" == "true" ]]; then
+          ./gradlew assembleRelease
+        else
+          ./gradlew assembleDebug
+        fi
 
-    - name: List APK Output Directory 
-      run: ls -R presentation/build/outputs/apk/debug
-
-    - name: Rename APK
+    - name: Locate and Package APK
       shell: bash
       run: |
-        set -euo pipefail
-        shopt -s nullglob
-        mapfile -t apk_files < <(printf '%s\n' presentation/build/outputs/apk/debug/QUIK-v*-debug.apk)
-        if [[ "${#apk_files[@]}" -eq 0 ]]; then
-          echo "No APK found matching QUIK-v*-debug.apk" >&2
+        mkdir -p output_apk
+        apk_file=$(find presentation/build/outputs/apk/ -name "*.apk" | head -n 1)
+        if [[ -n "$apk_file" ]]; then
+          cp "$apk_file" output_apk/quik-app.apk
+          echo "Found APK: $apk_file"
+        else
+          echo "No APK generated" >&2
           exit 1
         fi
-        if [[ "${#apk_files[@]}" -gt 1 ]]; then
-          echo "Multiple APKs found: ${apk_files[*]}" >&2
-          exit 1
-        fi
-        mv "${apk_files[0]}" presentation/build/outputs/apk/debug/QUIK-debug.apk
 
     - name: Upload App
       uses: actions/upload-artifact@v7
       with:
-        name: apk-debug
-        path: presentation/build/outputs/apk/debug/QUIK-debug.apk
+        name: quik-app
+        path: output_apk/quik-app.apk
 
   test:
     runs-on: ubuntu-latest
